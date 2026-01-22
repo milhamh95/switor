@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:switor}",
+            "name": "Debug Switor",
+            "target": "Switor",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Switor"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:switor}",
+            "name": "Release Switor",
+            "target": "Switor",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Switor"
+        }
+    ]
+}

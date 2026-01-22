@@ -59,12 +59,25 @@ struct Display: Identifiable, Hashable {
 
         return grouped.values.compactMap { modes -> ResolutionGroup? in
             guard let first = modes.first else { return nil }
-            let sortedModes = modes.sorted { $0.refreshRate > $1.refreshRate }
+
+            // Deduplicate refresh rates that round to the same integer
+            var seenRates: Set<Int> = []
+            let uniqueModes = modes
+                .sorted { $0.refreshRate > $1.refreshRate }
+                .filter { mode in
+                    let roundedRate = Int(mode.refreshRate.rounded())
+                    if seenRates.contains(roundedRate) {
+                        return false
+                    }
+                    seenRates.insert(roundedRate)
+                    return true
+                }
+
             return ResolutionGroup(
                 width: first.width,
                 height: first.height,
                 isHiDPI: first.isHiDPI,
-                refreshRates: sortedModes
+                refreshRates: uniqueModes
             )
         }
         .sorted { lhs, rhs in

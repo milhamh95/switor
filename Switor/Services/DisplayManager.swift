@@ -102,7 +102,6 @@ final class DisplayManager: ObservableObject {
         let isMain = CGDisplayIsMain(displayID) != 0
         let currentMode = getCurrentMode(for: displayID)
         let availableModes = getAvailableModes(for: displayID)
-
         return Display(
             id: displayID,
             name: name,

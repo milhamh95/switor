@@ -43,7 +43,10 @@ struct MenuBarView: View {
                     .padding(.vertical, 8)
             } else {
                 ForEach(displayManager.displays) { display in
-                    DisplaySectionView(display: display, onModeSelected: handleModeChange)
+                    DisplaySectionView(
+                        display: display,
+                        onModeSelected: handleModeChange
+                    )
 
                     if display.id != displayManager.displays.last?.id {
                         Divider()
@@ -117,6 +120,7 @@ struct MenuBarView: View {
             errorMessage = error.localizedDescription
         }
     }
+
 
     private func openSettingsWindow() {
         // Close the menu bar popup first

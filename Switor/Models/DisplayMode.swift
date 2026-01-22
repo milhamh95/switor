@@ -55,6 +55,12 @@ struct DisplayMode: Identifiable, Hashable, Codable {
         return "Default"
     }
 
+    /// Refresh rate with HiDPI label (e.g., "144 Hz HiDPI" or "60 Hz")
+    var refreshRateWithHiDPI: String {
+        let rateStr = refreshRate > 0 ? String(format: "%.0f Hz", refreshRate) : "Default"
+        return isHiDPI ? "\(rateStr) HiDPI" : rateStr
+    }
+
     /// Full description including HiDPI status
     var fullDescription: String {
         let hiDPISuffix = isHiDPI ? " (HiDPI)" : ""

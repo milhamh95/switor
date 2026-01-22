@@ -6,49 +6,60 @@ struct ResolutionListView: View {
     let onModeSelected: (DisplayMode, Display) -> Void
 
     @State private var selectedResolutionIndex: Int = 0
-    @State private var selectedRefreshRateIndex: Int = 0
-    @State private var isHiDPI: Bool = false
+    @State private var selectedModeIndex: Int = 0
     @State private var isInitialized: Bool = false
 
-    private var uniqueResolutions: [ResolutionGroup] {
-        display.uniqueResolutions(hiDPI: isHiDPI)
-    }
+    /// Get unique resolutions from HiDPI modes only (720p and above)
+    private var uniqueResolutions: [SimpleResolution] {
+        var seen: Set<String> = []
+        var result: [SimpleResolution] = []
 
-    private var currentGroup: ResolutionGroup? {
-        guard selectedResolutionIndex >= 0 && selectedResolutionIndex < uniqueResolutions.count else {
-            return nil
+        // Only consider HiDPI modes with height >= 720
+        for mode in display.availableModes where mode.isHiDPI && mode.height >= 720 {
+            let key = "\(mode.width)x\(mode.height)"
+            if !seen.contains(key) {
+                seen.insert(key)
+                result.append(SimpleResolution(width: mode.width, height: mode.height))
+            }
         }
-        return uniqueResolutions[selectedResolutionIndex]
+
+        // Sort from lowest to highest
+        return result.sorted { lhs, rhs in
+            if lhs.width != rhs.width {
+                return lhs.width < rhs.width
+            }
+            return lhs.height < rhs.height
+        }
     }
 
-    private var availableRefreshRates: [DisplayMode] {
-        currentGroup?.refreshRates ?? []
+    /// Get HiDPI modes for the selected resolution (different refresh rates)
+    private var availableModes: [DisplayMode] {
+        guard selectedResolutionIndex >= 0 && selectedResolutionIndex < uniqueResolutions.count else {
+            return []
+        }
+        let resolution = uniqueResolutions[selectedResolutionIndex]
+
+        // Get HiDPI modes matching this resolution
+        let modes = display.availableModes.filter {
+            $0.width == resolution.width && $0.height == resolution.height && $0.isHiDPI
+        }
+
+        // Deduplicate by rounded refresh rate
+        var seen: Set<Int> = []
+        return modes
+            .sorted { $0.refreshRate > $1.refreshRate }
+            .filter { mode in
+                let roundedRate = Int(mode.refreshRate.rounded())
+                if seen.contains(roundedRate) {
+                    return false
+                }
+                seen.insert(roundedRate)
+                return true
+            }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // HiDPI toggle (only show if both modes available)
-            if display.hasHiDPIModes && display.hasNonHiDPIModes {
-                HStack {
-                    Text("HiDPI (Retina)")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-
-                    Spacer()
-
-                    Toggle("", isOn: $isHiDPI)
-                        .toggleStyle(.switch)
-                        .controlSize(.regular)
-                        .onChange(of: isHiDPI) { _ in
-                            guard isInitialized else { return }
-                            // Reset selection when toggling HiDPI
-                            selectedResolutionIndex = 0
-                            selectedRefreshRateIndex = 0
-                            applySelectedMode()
-                        }
-                }
-            }
-
             // Resolution picker
             HStack {
                 Text("Resolution")
@@ -58,8 +69,8 @@ struct ResolutionListView: View {
                 Spacer()
 
                 Picker("", selection: $selectedResolutionIndex) {
-                    ForEach(Array(uniqueResolutions.enumerated()), id: \.offset) { index, group in
-                        Text(group.resolutionString)
+                    ForEach(Array(uniqueResolutions.enumerated()), id: \.offset) { index, res in
+                        Text(res.displayString)
                             .tag(index)
                     }
                 }
@@ -67,13 +78,13 @@ struct ResolutionListView: View {
                 .frame(minWidth: 140)
                 .onChange(of: selectedResolutionIndex) { _ in
                     guard isInitialized else { return }
-                    // Reset refresh rate index when resolution changes
-                    selectedRefreshRateIndex = 0
+                    // Reset mode index when resolution changes
+                    selectedModeIndex = 0
                     applySelectedMode()
                 }
             }
 
-            // Refresh rate picker
+            // Refresh rate + HiDPI picker
             HStack {
                 Text("Refresh Rate")
                     .font(.body)
@@ -81,15 +92,15 @@ struct ResolutionListView: View {
 
                 Spacer()
 
-                Picker("", selection: $selectedRefreshRateIndex) {
-                    ForEach(Array(availableRefreshRates.enumerated()), id: \.offset) { index, mode in
+                Picker("", selection: $selectedModeIndex) {
+                    ForEach(Array(availableModes.enumerated()), id: \.offset) { index, mode in
                         Text(mode.refreshRateString)
                             .tag(index)
                     }
                 }
                 .pickerStyle(.menu)
-                .frame(minWidth: 90)
-                .onChange(of: selectedRefreshRateIndex) { _ in
+                .frame(minWidth: 130)
+                .onChange(of: selectedModeIndex) { _ in
                     guard isInitialized else { return }
                     applySelectedMode()
                 }
@@ -98,9 +109,10 @@ struct ResolutionListView: View {
         .onAppear {
             initializeSelection()
         }
-        .onChange(of: display.currentMode) { _ in
+        .onChange(of: display.currentMode?.id) { _ in
             initializeSelection()
         }
+        .id("\(display.id)-\(display.currentMode?.id.uuidString ?? "none")")
     }
 
     private func initializeSelection() {
@@ -111,23 +123,38 @@ struct ResolutionListView: View {
             return
         }
 
-        // Set HiDPI toggle based on current mode
-        isHiDPI = currentMode.isHiDPI
+        let resolutions = uniqueResolutions
 
-        // Find the index of the current resolution group
-        let resolutions = display.uniqueResolutions(hiDPI: isHiDPI)
-        if let groupIndex = resolutions.firstIndex(where: { group in
-            group.width == currentMode.width &&
-            group.height == currentMode.height
+        // Find the index of the current resolution
+        if let resIndex = resolutions.firstIndex(where: {
+            $0.width == currentMode.width && $0.height == currentMode.height
         }) {
-            selectedResolutionIndex = groupIndex
+            selectedResolutionIndex = resIndex
 
-            // Find the index of the current refresh rate
-            if let rateIndex = resolutions[groupIndex].refreshRates.firstIndex(where: { mode in
+            // Get available modes for this resolution directly (don't use computed property)
+            let resolution = resolutions[resIndex]
+            var seen: Set<Int> = []
+            let modes = display.availableModes
+                .filter { $0.width == resolution.width && $0.height == resolution.height && $0.isHiDPI }
+                .sorted { $0.refreshRate > $1.refreshRate }
+                .filter { mode in
+                    let roundedRate = Int(mode.refreshRate.rounded())
+                    if seen.contains(roundedRate) { return false }
+                    seen.insert(roundedRate)
+                    return true
+                }
+
+            // Find the index of the current mode (refresh rate)
+            if let modeIndex = modes.firstIndex(where: { mode in
                 abs(mode.refreshRate - currentMode.refreshRate) < 1.0
             }) {
-                selectedRefreshRateIndex = rateIndex
+                selectedModeIndex = modeIndex
+            } else {
+                selectedModeIndex = 0
             }
+        } else {
+            selectedResolutionIndex = 0
+            selectedModeIndex = 0
         }
 
         // Mark as initialized after a brief delay to avoid triggering onChange
@@ -137,12 +164,18 @@ struct ResolutionListView: View {
     }
 
     private func applySelectedMode() {
-        guard let group = currentGroup else { return }
-
-        let rateIndex = min(selectedRefreshRateIndex, group.refreshRates.count - 1)
-        guard rateIndex >= 0 else { return }
-
-        let mode = group.refreshRates[rateIndex]
+        guard selectedModeIndex >= 0 && selectedModeIndex < availableModes.count else { return }
+        let mode = availableModes[selectedModeIndex]
         onModeSelected(mode, display)
+    }
+}
+
+/// Simple resolution without HiDPI info
+private struct SimpleResolution {
+    let width: Int
+    let height: Int
+
+    var displayString: String {
+        "\(width) × \(height)"
     }
 }

@@ -1,5 +1,64 @@
 import SwiftUI
 
+/// Custom progress bar style slider
+struct ProgressBarSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    var onEditingChanged: (Bool) -> Void = { _ in }
+
+    @State private var isDragging = false
+
+    private var progress: Double {
+        guard range.upperBound > range.lowerBound else { return 0 }
+        return (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                // Background track
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.secondary.opacity(0.2))
+                    .frame(height: 12)
+
+                // Filled portion
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.accentColor)
+                    .frame(width: max(12, geometry.size.width * progress), height: 12)
+
+                // Drag handle (subtle indicator at the end of filled portion)
+                Circle()
+                    .fill(Color.white)
+                    .shadow(radius: 2)
+                    .frame(width: 16, height: 16)
+                    .offset(x: max(0, geometry.size.width * progress - 8))
+            }
+            .frame(height: 16)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        if !isDragging {
+                            isDragging = true
+                            onEditingChanged(true)
+                        }
+                        let percent = gesture.location.x / geometry.size.width
+                        let clampedPercent = min(max(percent, 0), 1)
+                        let rawValue = range.lowerBound + clampedPercent * (range.upperBound - range.lowerBound)
+                        let steppedValue = (rawValue / step).rounded() * step
+                        value = min(max(steppedValue, range.lowerBound), range.upperBound)
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                        onEditingChanged(false)
+                    }
+            )
+        }
+        .frame(height: 16)
+    }
+}
+
 /// Slider-based resolution selector for quick resolution changes
 struct ResolutionSliderView: View {
     let display: Display
@@ -11,7 +70,8 @@ struct ResolutionSliderView: View {
     @State private var isInitialized: Bool = false
 
     private var uniqueResolutions: [ResolutionGroup] {
-        display.uniqueResolutions(hiDPI: isHiDPI)
+        // Filter to 720p and above
+        display.uniqueResolutions(hiDPI: isHiDPI).filter { $0.height >= 720 }
     }
 
     private var currentGroup: ResolutionGroup? {
@@ -63,9 +123,9 @@ struct ResolutionSliderView: View {
                         }
                     }
 
-                    Slider(
+                    ProgressBarSlider(
                         value: $selectedIndex,
-                        in: 0...Double(max(0, uniqueResolutions.count - 1)),
+                        range: 0...Double(max(0, uniqueResolutions.count - 1)),
                         step: 1
                     ) { editing in
                         if !editing && isInitialized {
@@ -121,15 +181,18 @@ struct ResolutionSliderView: View {
         .onAppear {
             initializeSelection()
         }
-        .onChange(of: display.currentMode) { _ in
+        .onChange(of: display.currentMode?.id) { _ in
             initializeSelection()
         }
+        .id("\(display.id)-\(display.currentMode?.id.uuidString ?? "none")")
     }
 
     private func initializeSelection() {
         isInitialized = false
 
         guard let currentMode = display.currentMode else {
+            selectedIndex = 0
+            selectedRefreshRateIndex = 0
             isInitialized = true
             return
         }
@@ -137,21 +200,36 @@ struct ResolutionSliderView: View {
         // Set HiDPI toggle based on current mode
         isHiDPI = currentMode.isHiDPI
 
+        // Use the same filtered resolutions as the view (720p+)
+        let resolutions = display.uniqueResolutions(hiDPI: isHiDPI).filter { $0.height >= 720 }
+
+        // Clamp selectedIndex to valid range
+        let maxIndex = max(0, resolutions.count - 1)
+
         // Find the index of the current resolution group
-        let resolutions = display.uniqueResolutions(hiDPI: isHiDPI)
         if let groupIndex = resolutions.firstIndex(where: { group in
             group.width == currentMode.width &&
             group.height == currentMode.height
         }) {
             selectedIndex = Double(groupIndex)
 
-            // Find the index of the current refresh rate
-            if let rateIndex = resolutions[groupIndex].refreshRates.firstIndex(where: { mode in
+            // Find the index of the current refresh rate directly
+            let refreshRates = resolutions[groupIndex].refreshRates
+            if let rateIndex = refreshRates.firstIndex(where: { mode in
                 abs(mode.refreshRate - currentMode.refreshRate) < 1.0
             }) {
                 selectedRefreshRateIndex = rateIndex
+            } else {
+                selectedRefreshRateIndex = 0
             }
+        } else {
+            // Current resolution not in list (below 720p), default to highest
+            selectedIndex = Double(maxIndex)
+            selectedRefreshRateIndex = 0
         }
+
+        // Ensure index is within bounds
+        selectedIndex = min(selectedIndex, Double(maxIndex))
 
         // Mark as initialized after a brief delay to avoid triggering onChange
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
